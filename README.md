@@ -14,6 +14,6 @@ Make sure to update your repository by running `git pull` after a new homework a
 
 To work on a homework assignment or a project, we recommend starting by creating the final submission branch from the `main` branch. The submission branch should be named `hw00-submit`, `hw01-submit`, `hw02-submit`, or `project-submit`, depending on the assignment. All of your work should be contained in this branch, so that it can be properly reviewed.
 
-To submit your assignment, create a merge request from the submission branch to the main branch and add your tutor(s) for review. If you'd like to resubmit the assignment after reviews (for up to 2 additional points), continue working in the same branch and merge request.
+For each assignment, you should create a solution in the relevant directory in your repository. The solution should contain one or more projects with your code. To submit your assignment, create a merge request from the submission branch to the main branch and add your tutor(s) for review. If you'd like to resubmit the assignment after reviews (for up to 2 additional points), continue working in the same branch and merge request.
 
 After the final review, feel free to merge the branches.
