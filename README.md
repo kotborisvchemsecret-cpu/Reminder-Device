@@ -1,4 +1,4 @@
-== Creating Your Own Repository
+## Creating Your Own Repository
 
 To get started and learn how to work with this repository, please have a look at the [Git instructions in the interactive syllabus](https://is.muni.cz/auth/el/fi/jaro2026/PB178/index.qwarp?prejit=4439141). The key instructions:
 
@@ -10,7 +10,7 @@ To get started and learn how to work with this repository, please have a look at
 
 Make sure to update your repository by running `git pull` after a new homework assignment is added.
 
-== Working On Assignments
+## Working On Assignments
 
 To work on a homework assignment or a project, we recommend starting by creating the final submission branch from the `main` branch. The submission branch should be named `hw00-submit`, `hw01-submit`, `hw02-submit`, or `project-submit`, depending on the assignment. All of your work should be contained in this branch, so that it can be properly reviewed.
 
