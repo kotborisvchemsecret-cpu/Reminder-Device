@@ -4,6 +4,8 @@ Pico W based device displaying upcoming events.
 A script running on the pico will maintain an acces point to add or remove events remotely. 
 Planning to creatte a .Net app on the user side.
 
+Working in dev branch
+
 Software:
 using display drivers from
 https://github.com/waveshare/Pico_code.git
