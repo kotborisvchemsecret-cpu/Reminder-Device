@@ -4,7 +4,9 @@ using System.Text;
 
 namespace reminder.Models
 {
-    internal class Class1
+    public class EventModel
     {
+        public string Name { get; set; } = "";
+        public DateTime Date { get; set; }
     }
 }
