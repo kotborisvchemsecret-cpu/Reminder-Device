@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="reminder.Views.Settings">
+
+    <VerticalStackLayout Padding="20" Spacing="20">
+        <Label Text="Pico IP Address" FontSize="18" />
+        <Entry Text="{Binding PicoIp}" Placeholder="192.168.1.xxx" />
+
+        <Button Text="Save" Command="{Binding SaveCommand}" />
+    </VerticalStackLayout>
+
+</ContentPage>

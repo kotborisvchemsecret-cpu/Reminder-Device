@@ -1,3 +1,5 @@
 <Solution>
-  <Project Path="reminder/reminder.csproj" />
+  <Project Path="reminder/reminder.csproj" DisplayName="Reminder">
+    <Deploy Solution="Debug|*" />
+  </Project>
 </Solution>
