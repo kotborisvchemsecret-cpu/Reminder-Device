@@ -14,7 +14,54 @@ import ure
 # -----------------------
 LCD = LCD_1inch14()
 
+# -----------------------
+# GLOBAL SCROLL STATE
+# -----------------------
+last_scroll = time.ticks_ms()
+scroll_pos = 0          # horizontal position
+event_scroll = 0        # vertical scroll index
+
+# -----------------------
+# BUTTONS
+# -----------------------
+btn_up = Pin(2, Pin.IN, Pin.PULL_UP)
+btn_down = Pin(3, Pin.IN, Pin.PULL_UP)
+
+# -----------------------
+# SCROLLING TEXT HELPER
+# -----------------------
+def draw_scrolling_text(lcd, text, x, y, width, color, offset):
+    text_width = len(text) * 8
+    if text_width <= width:
+        lcd.text(text, x, y, color)
+        return
+
+    shift = offset % (text_width + 20)
+
+    # Compute the visible window
+    start_px = shift
+    end_px = shift + width
+
+    # Draw characters only if their pixel range intersects the window
+    px = 0
+    for ch in text:
+        ch_start = px
+        ch_end = px + 8
+
+        if ch_end > start_px and ch_start < end_px:
+            draw_x = x + (ch_start - start_px)
+            lcd.text(ch, draw_x, y, color)
+
+        px += 8
+
+
+
+# -----------------------
+# DISPLAY
+# -----------------------
 def update_display(msg, events=None, ip="0.0.0.0"):
+    global event_scroll, scroll_pos
+
     LCD.fill(LCD.black)
     LCD.rect(0, 0, 240, 135, LCD.blue)
 
@@ -31,10 +78,12 @@ def update_display(msg, events=None, ip="0.0.0.0"):
 
     # Events
     if events:
+        visible = events[event_scroll:event_scroll + 3]
         y = 40
-        for e in events[:3]:
-            LCD.text(f"> {e['title'][:12]}", 15, y, LCD.white)
-            LCD.text(f"{e['date']}", 150, y, LCD.white)
+        for e in visible:
+            title = e["title"]
+            draw_scrolling_text(LCD, title, 15, y, 110, LCD.white, scroll_pos)
+            LCD.text(e["date"], 150, y, LCD.white)
             y += 22
 
     # Footer
@@ -111,7 +160,7 @@ update_display("Syncing Time...", ip=ip)
 # NTP TIME SYNC
 # -----------------------
 try:
-    ntptime.settime()  # sets UTC
+    ntptime.settime()
     UTC_OFFSET = 2 * 3600
     t = time.localtime(time.time() + UTC_OFFSET)
     machine.RTC().datetime((t[0], t[1], t[2], t[6], t[3], t[4], t[5], 0))
@@ -139,8 +188,28 @@ msg = "TCP Ready"
 # -----------------------
 while True:
     try:
+        # Update scroll positions
+        if time.ticks_diff(time.ticks_ms(), last_scroll) > 40:
+            scroll_pos = (scroll_pos + 8) % 2000
+            last_scroll = time.ticks_ms()
+
+        # Handle UP button
+        if not btn_up.value():
+            if event_scroll > 0:
+                event_scroll -= 1
+                msg = "Scroll Up"
+            time.sleep(0.15)
+
+        # Handle DOWN button
+        if not btn_down.value():
+            if event_scroll < max(0, len(events) - 3):
+                event_scroll += 1
+                msg = "Scroll Down"
+            time.sleep(0.15)
+
         update_display(msg, events, ip)
 
+        # TCP handling
         try:
             conn, addr = server.accept()
         except OSError:
@@ -158,9 +227,7 @@ while True:
             conn.close()
             continue
 
-        # -----------------------
         # COMMAND HANDLING
-        # -----------------------
         if req.get("cmd") == "add":
             title = req.get("title", "Task")
             date = req.get("date", "2024-01-01")
