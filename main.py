@@ -1,45 +1,94 @@
 import network
-from machine import Pin, SPI, PWM
+import machine
+from machine import Pin, PWM
 import socket
 import time
 import json
 import secrets
-import ntptime # Added missing import
+import ntptime
 from lcd import LCD_1inch14
+import ure
 
-# Initialize LCD
+# -----------------------
+# LCD SETUP
+# -----------------------
 LCD = LCD_1inch14()
 
+# -----------------------
+# GLOBAL SCROLL STATE
+# -----------------------
+last_scroll = time.ticks_ms()
+scroll_pos = 0
+event_scroll = 0
+
+# -----------------------
+# BUTTONS + NONBLOCKING DEBOUNCE
+# -----------------------
+btn_up = Pin(2, Pin.IN, Pin.PULL_UP)
+btn_down = Pin(3, Pin.IN, Pin.PULL_UP)
+last_button = time.ticks_ms()
+DEBOUNCE_MS = 150
+
+# -----------------------
+# SCROLLING TEXT HELPER
+# -----------------------
+def draw_scrolling_text(lcd, text, x, y, width, color, offset):
+    text_width = len(text) * 8
+    if text_width <= width:
+        lcd.text(text, x, y, color)
+        return
+
+    shift = offset % (text_width + 20)
+
+    start_px = shift
+    end_px = shift + width
+
+    px = 0
+    for ch in text:
+        ch_start = px
+        ch_end = px + 8
+
+        if ch_end > start_px and ch_start < end_px:
+            draw_x = x + (ch_start - start_px)
+            lcd.text(ch, draw_x, y, color)
+
+        px += 8
+
+# -----------------------
+# DISPLAY
+# -----------------------
 def update_display(msg, events=None, ip="0.0.0.0"):
+    global event_scroll, scroll_pos
+
     LCD.fill(LCD.black)
     LCD.rect(0, 0, 240, 135, LCD.blue)
-    
-    # Get current time from the Pico
-    # (year, month, day, hour, minute, second, weekday, yearday)
-    t = time.localtime()
-    time_str = "{:02d}:{:02d}".format(t[3], t[4]) # HH:MM format
-    date_str = "{:02d}.{:02d}".format(t[2], t[1]) # Day.Month
-    
-    # 1. Header Area - Title + Clock
-    LCD.text(date_str, 105, 10, LCD.white)
-    LCD.text("EVENTS", 10, 10, LCD.green) 
-    LCD.text(time_str, 185, 10, LCD.white) # Clock in top right
-    LCD.hline(10, 25, 220, LCD.blue)
-    
-    # 2. Main Content Area (Events)
-    if events and len(events) > 0:
-        y = 40
-        for e in events[:3]: # Show 3 events to make room
-            LCD.text(f"> {e['title'][:12]}", 15, y, LCD.white)
-            LCD.text(f"{e['date']}", 150, y, LCD.white)
-            y += 22
-    
 
-    # 3. Footer Area - Status and IP
+    # Time
+    t = time.localtime()
+    time_str = "{:02d}:{:02d}".format(t[3], t[4])
+    date_str = "{:02d}.{:02d}".format(t[2], t[1])
+
+    # Header
+    LCD.text(date_str, 105, 10, LCD.white)
+    LCD.text("EVENTS", 10, 10, LCD.green)
+    LCD.text(time_str, 185, 10, LCD.white)
+    LCD.hline(10, 25, 220, LCD.blue)
+
+    # Events
+    if events:
+        visible = events[event_scroll:event_scroll + 3]
+        y = 40
+        for e in visible:
+            title = e["title"]
+            draw_scrolling_text(LCD, title, 15, y, 110, LCD.white, scroll_pos)
+            LCD.text(e["date"], 150, y, LCD.white)
+            y += 22
+
+    # Footer
     LCD.hline(10, 110, 220, LCD.blue)
     LCD.text(msg[:12], 15, 118, LCD.white)
     LCD.text(ip, 125, 118, LCD.red)
-    
+
     LCD.show()
 
 # -----------------------
@@ -61,9 +110,6 @@ def save_events(events):
 # -----------------------
 # DATE HELPERS
 # -----------------------
-def today():
-    return time.localtime()[:3]  # (year, month, day)
-
 def parse_date(date_str):
     try:
         y, m, d = date_str.split("-")
@@ -71,18 +117,27 @@ def parse_date(date_str):
     except:
         return (2000, 1, 1)
 
-def days_left(event_date, today_date):
-    ey, em, ed = event_date
-    ty, tm, td = today_date
-    return (ey - ty) * 365 + (em - tm) * 30 + (ed - td)
+def today():
+    t = time.localtime()
+    return (t[0], t[1], t[2])
 
-# Backlight
+def days_left(event_date, today_date):
+    try:
+        e = time.mktime((event_date[0], event_date[1], event_date[2], 0,0,0,0,0))
+        t = time.mktime((today_date[0], today_date[1], today_date[2], 0,0,0,0,0))
+        return int((e - t) / 86400)
+    except:
+        return "?"
+
+# -----------------------
+# BACKLIGHT
+# -----------------------
 pwm = PWM(Pin(13))
 pwm.freq(1000)
 pwm.duty_u16(32768)
 
 # -----------------------
-# WIFI SETUP
+# WIFI
 # -----------------------
 ssid = secrets.WIFI['ssid']
 password = secrets.WIFI['password']
@@ -92,101 +147,117 @@ wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
 wlan.connect(ssid, password)
 
-# Wait for WiFi
 while not wlan.isconnected():
     update_display("Connecting...")
     time.sleep(1)
-   
-if wlan.isconnected():
-    ip = wlan.ifconfig()[0]
-    update_display("Syncing Time...", ip=ip)
-    try:
-        # Try to sync 3 times
-        for _ in range(3):
-            try:
-                ntptime.settime()
-                UTC_OFFSET = 2 * 60 * 60 
-                actual_time = time.time() + UTC_OFFSET
-                y, m, d, h, mn, s, w, yd = time.localtime(actual_time)
-                machine.RTC().datetime((y, m, d, 0, h, mn, s, 0))
-                update_display("Time Synced!", ip=ip)
-                break 
-            except:
-                time.sleep(1)
-        else:
-            update_display("NTP Failed", ip=ip)
-    except:
-        update_display("Clock Error", ip=ip)
-else:
-    update_display("WiFi Failed!")
-    ip = "No IP"
+
+ip = wlan.ifconfig()[0]
+update_display("Syncing Time...", ip=ip)
 
 # -----------------------
-# SERVER SETUP
+# NTP TIME SYNC
+# -----------------------
+try:
+    ntptime.settime()
+    UTC_OFFSET = 2 * 3600
+    t = time.localtime(time.time() + UTC_OFFSET)
+    machine.RTC().datetime((t[0], t[1], t[2], t[6], t[3], t[4], t[5], 0))
+    update_display("Time Synced!", ip=ip)
+except:
+    update_display("NTP Failed", ip=ip)
+
+# -----------------------
+# TCP SERVER SETUP
 # -----------------------
 events = load_events()
-update_display("Ready", events, ip) # Initial UI update
+update_display("Ready", events, ip)
 
-addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
-s = socket.socket()
-s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(addr)
-s.listen(1)
-s.settimeout(1.0)
+PORT = 5000
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("0.0.0.0", PORT))
+server.listen(1)
+server.settimeout(0.05)   # <<< MUCH FASTER, NO UI FREEZE
+
+msg = "TCP Ready"
 
 # -----------------------
 # MAIN LOOP
 # -----------------------
-msg = "Send to"
 while True:
     try:
-        # Every loop (every 1 second), we refresh the display so the clock ticks
+        now = time.ticks_ms()
+
+        # Update scroll positions
+        if time.ticks_diff(now, last_scroll) > 40:
+            scroll_pos = (scroll_pos + 4) % 2000
+            last_scroll = now
+
+        # Handle UP button (non-blocking)
+        if not btn_up.value():
+            if time.ticks_diff(now, last_button) > DEBOUNCE_MS:
+                if event_scroll > 0:
+                    event_scroll -= 1
+                    msg = "Scroll Up"
+                last_button = now
+
+        # Handle DOWN button (non-blocking)
+        if not btn_down.value():
+            if time.ticks_diff(now, last_button) > DEBOUNCE_MS:
+                if event_scroll < max(0, len(events) - 3):
+                    event_scroll += 1
+                    msg = "Scroll Down"
+                last_button = now
+
         update_display(msg, events, ip)
-        
+
+        # TCP handling
         try:
-            conn, addr = s.accept()
+            conn, addr = server.accept()
         except OSError:
-            # This happens if no one connects within the 1-second timeout
-            continue 
+            continue
 
-        request = conn.recv(1024).decode()
-        
-        if "GET / " in request:
-            today_date = today()
-            html = f"<html><body><h1>Pico Events</h1><p>IP: {ip}</p><ul>"
-            for i, e in enumerate(events):
-                try:
-                    diff = days_left(parse_date(e["date"]), today_date)
-                except: diff = "?"
-                html += f"<li>{e['title']} - {e['date']} ({diff} days) <a href='/delete?id={i}'>[Del]</a></li>"
-            
-            html += '<br><form action="/add">Title: <input name="title"><br>Date: <input name="date" type="date"><button>Add</button></form></body></html>'
-            conn.send("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + html)
+        data = conn.recv(1024)
+        if not data:
+            conn.close()
+            continue
 
-        elif "/add" in request:
-            try:
-                query = request.split("GET /add?")[1].split(" ")[0]
+        try:
+            req = json.loads(data.decode())
+        except:
+            conn.send(b'{"error":"invalid json"}')
+            conn.close()
+            continue
 
-                params = {k: v.replace("+", " ").replace("%20", " ") for k, v in [p.split("=") for p in query.split("&")]}
-                events.append({"title": params.get("title", "Task"), "date": params.get("date", "2024-01-01")})
+        # COMMAND HANDLING
+        if req.get("cmd") == "add":
+            title = req.get("title", "Task")
+            date = req.get("date", "2024-01-01")
+            events.append({"title": title, "date": date})
+            save_events(events)
+            msg = "Added"
+            conn.send(b'{"status":"ok"}')
+
+        elif req.get("cmd") == "delete":
+            idx = req.get("index", -1)
+            if 0 <= idx < len(events):
+                events.pop(idx)
                 save_events(events)
-                update_display("Event Saved!", events, ip)
-            except: pass
-            conn.send("HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+                msg = "Deleted"
+                conn.send(b'{"status":"ok"}')
+            else:
+                conn.send(b'{"error":"bad index"}')
 
-        elif "/delete" in request:
-            try:
-                i_str = request.split("id=")[1].split(" ")[0]
-                i = int(i_str)
-                if 0 <= i < len(events):
-                    events.pop(i)
-                    save_events(events)
-                    update_display("Deleted!", events, ip) # Fixed typo here
-            except: pass
-            conn.send("HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+        elif req.get("cmd") == "list":
+            conn.send(json.dumps(events).encode())
+
+        else:
+            conn.send(b'{"error":"unknown cmd"}')
 
         conn.close()
+
     except Exception as e:
-        msg="Socket Error"
-        if 'conn' in locals(): conn.close()
+        msg = "TCP Error"
+        if 'conn' in locals():
+            conn.close()
         time.sleep(0.1)
