@@ -18,14 +18,16 @@ LCD = LCD_1inch14()
 # GLOBAL SCROLL STATE
 # -----------------------
 last_scroll = time.ticks_ms()
-scroll_pos = 0          # horizontal position
-event_scroll = 0        # vertical scroll index
+scroll_pos = 0
+event_scroll = 0
 
 # -----------------------
-# BUTTONS
+# BUTTONS + NONBLOCKING DEBOUNCE
 # -----------------------
 btn_up = Pin(2, Pin.IN, Pin.PULL_UP)
 btn_down = Pin(3, Pin.IN, Pin.PULL_UP)
+last_button = time.ticks_ms()
+DEBOUNCE_MS = 150
 
 # -----------------------
 # SCROLLING TEXT HELPER
@@ -38,11 +40,9 @@ def draw_scrolling_text(lcd, text, x, y, width, color, offset):
 
     shift = offset % (text_width + 20)
 
-    # Compute the visible window
     start_px = shift
     end_px = shift + width
 
-    # Draw characters only if their pixel range intersects the window
     px = 0
     for ch in text:
         ch_start = px
@@ -53,8 +53,6 @@ def draw_scrolling_text(lcd, text, x, y, width, color, offset):
             lcd.text(ch, draw_x, y, color)
 
         px += 8
-
-
 
 # -----------------------
 # DISPLAY
@@ -179,7 +177,7 @@ server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 server.bind(("0.0.0.0", PORT))
 server.listen(1)
-server.settimeout(1.0)
+server.settimeout(0.05)   # <<< MUCH FASTER, NO UI FREEZE
 
 msg = "TCP Ready"
 
@@ -188,24 +186,28 @@ msg = "TCP Ready"
 # -----------------------
 while True:
     try:
+        now = time.ticks_ms()
+
         # Update scroll positions
-        if time.ticks_diff(time.ticks_ms(), last_scroll) > 40:
-            scroll_pos = (scroll_pos + 8) % 2000
-            last_scroll = time.ticks_ms()
+        if time.ticks_diff(now, last_scroll) > 40:
+            scroll_pos = (scroll_pos + 4) % 2000
+            last_scroll = now
 
-        # Handle UP button
+        # Handle UP button (non-blocking)
         if not btn_up.value():
-            if event_scroll > 0:
-                event_scroll -= 1
-                msg = "Scroll Up"
-            time.sleep(0.15)
+            if time.ticks_diff(now, last_button) > DEBOUNCE_MS:
+                if event_scroll > 0:
+                    event_scroll -= 1
+                    msg = "Scroll Up"
+                last_button = now
 
-        # Handle DOWN button
+        # Handle DOWN button (non-blocking)
         if not btn_down.value():
-            if event_scroll < max(0, len(events) - 3):
-                event_scroll += 1
-                msg = "Scroll Down"
-            time.sleep(0.15)
+            if time.ticks_diff(now, last_button) > DEBOUNCE_MS:
+                if event_scroll < max(0, len(events) - 3):
+                    event_scroll += 1
+                    msg = "Scroll Down"
+                last_button = now
 
         update_display(msg, events, ip)
 
