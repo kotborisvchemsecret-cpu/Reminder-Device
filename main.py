@@ -4,9 +4,11 @@ from machine import Pin, PWM
 import socket
 import time
 import json
+import secrets2
 import secrets
 import ntptime
 from lcd import LCD_1inch14
+from grid import draw_icon
 import ure
 
 # -----------------------
@@ -79,8 +81,16 @@ def update_display(msg, events=None, ip="0.0.0.0"):
         visible = events[event_scroll:event_scroll + 3]
         y = 40
         for e in visible:
+            icon = e.get("icon")
+
+            if icon:
+                draw_icon(LCD, icon, 5, y)
+                text_x = 25
+            else:
+                text_x = 15
+
             title = e["title"]
-            draw_scrolling_text(LCD, title, 15, y, 110, LCD.white, scroll_pos)
+            draw_scrolling_text(LCD, title, text_x, y+3, 110, LCD.white, scroll_pos)
             LCD.text(e["date"], 150, y, LCD.white)
             y += 22
 
@@ -137,34 +147,46 @@ pwm.freq(1000)
 pwm.duty_u16(32768)
 
 # -----------------------
-# WIFI
+# WIFI (NON-BLOCKING)
 # -----------------------
-ssid = secrets.WIFI['ssid']
-password = secrets.WIFI['password']
+ssid = secrets2.WIFI['ssid']
+password = secrets2.WIFI['password']
+
+wifi_ok = False
+ip = "offline"
 
 update_display("WiFi Init...")
+
 wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
 wlan.connect(ssid, password)
 
-while not wlan.isconnected():
-    update_display("Connecting...")
+# krátký pokus o připojení (NE nekonečný loop)
+for _ in range(10):  # cca 10 sekund
+    if wlan.isconnected():
+        wifi_ok = True
+        break
+    update_display("Connecting WiFi...")
     time.sleep(1)
 
-ip = wlan.ifconfig()[0]
-update_display("Syncing Time...", ip=ip)
+if wifi_ok:
+    ip = wlan.ifconfig()[0]
+    update_display("WiFi OK", ip=ip)
 
-# -----------------------
-# NTP TIME SYNC
-# -----------------------
-try:
-    ntptime.settime()
-    UTC_OFFSET = 2 * 3600
-    t = time.localtime(time.time() + UTC_OFFSET)
-    machine.RTC().datetime((t[0], t[1], t[2], t[6], t[3], t[4], t[5], 0))
-    update_display("Time Synced!", ip=ip)
-except:
-    update_display("NTP Failed", ip=ip)
+    # -----------------------
+    # NTP TIME SYNC (jen pokud WiFi funguje)
+    # -----------------------
+    try:
+        ntptime.settime()
+        UTC_OFFSET = 2 * 3600
+        t = time.localtime(time.time() + UTC_OFFSET)
+        machine.RTC().datetime((t[0], t[1], t[2], t[6], t[3], t[4], t[5], 0))
+        update_display("Time Synced!", ip=ip)
+    except:
+        update_display("NTP Failed", ip=ip)
+
+else:
+    update_display("Offline mode", ip=ip)
 
 # -----------------------
 # TCP SERVER SETUP
@@ -177,9 +199,10 @@ server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 server.bind(("0.0.0.0", PORT))
 server.listen(1)
-server.settimeout(0.05)   # <<< MUCH FASTER, NO UI FREEZE
+server.settimeout(0.05)
 
-msg = "TCP Ready"
+if ip != "offline":
+    msg = "TCP Ready"
 
 # -----------------------
 # MAIN LOOP
@@ -214,16 +237,29 @@ while True:
         # TCP handling
         try:
             conn, addr = server.accept()
+            conn.settimeout(1)
         except OSError:
             continue
+        buf = b""
+        while True:
+            try:
+                chunk = conn.recv(1024)
+                if not chunk:
+                    break
+                buf += chunk
+                if b"\n" in chunk:
+                    break
+            except OSError:
+                break
 
-        data = conn.recv(1024)
-        if not data:
+        print("RECV RAW:", buf)
+
+        if not buf:
             conn.close()
             continue
 
         try:
-            req = json.loads(data.decode())
+            req = json.loads(buf.decode().strip())
         except:
             conn.send(b'{"error":"invalid json"}')
             conn.close()
@@ -233,7 +269,8 @@ while True:
         if req.get("cmd") == "add":
             title = req.get("title", "Task")
             date = req.get("date", "2024-01-01")
-            events.append({"title": title, "date": date})
+            icon = req.get("icon")
+            events.append({"title": title, "date": date, "icon": icon})
             save_events(events)
             msg = "Added"
             conn.send(b'{"status":"ok"}')
@@ -257,6 +294,7 @@ while True:
         conn.close()
 
     except Exception as e:
+        print("TCP Error: ", e)
         msg = "TCP Error"
         if 'conn' in locals():
             conn.close()
